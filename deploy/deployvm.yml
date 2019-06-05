@@ -1,0 +1,96 @@
+---
+- hosts: localhost
+  vars:
+    vpcid: vpc-01ca548ae23699892
+    region: us-east-1
+    sgname: webinstsg
+    lbsgname: weblbsg
+    kpname: webkey
+    instancetype: t2.micro
+    myami: ami-0c9ef6e37b6488c64
+    subnetid:
+      - subnet-0dbf0a3393278959e
+      - subnet-09f1957fb8156f81a
+    vmname: 
+      - webservers-1
+      - webservers-2
+  tasks:
+  - name: example using security group rule descriptions
+    ec2_group:
+      name: "{{ sgname }}"
+      description: Security Group for the instances
+      vpc_id: "{{ vpcid }}"
+      region: "{{ region }}"
+      rules:
+        - proto: tcp
+          ports:
+          - 80
+          - 22
+          cidr_ip: 0.0.0.0/0
+          rule_desc: allow all on port 80
+    register: webinstsg_output
+  - debug:
+      var: webinstsg_output
+  - name: example using security group rule descriptions
+    ec2_group:
+      name: "{{ lbsgname }}"
+      description: Security Group for the instances
+      vpc_id: "{{ vpcid }}"
+      region: "{{ region }}"
+      rules:
+        - proto: tcp
+          ports:
+          - 80
+          - 22
+          cidr_ip: 0.0.0.0/0
+          rule_desc: allow all on port 80
+    register: weblbsg_output
+  - debug:
+      var: webinstsg_output
+  - name: Create VMs
+    ec2_instance:
+      region: "{{ region }}"      
+      key_name: "{{ kpname }}"
+      security_group: "{{ webinstsg_output.group_id }}"
+      instance_type: "{{ instancetype }}"
+      image_id: "{{ myami }}"
+      vpc_subnet_id: "{{ item[0] }}" 
+      network:
+        assign_public_ip: yes
+      name: "{{ item[1] }}"        
+      wait: yes
+      wait_timeout: 120
+    with_together:
+      - "{{ subnetid }}" 
+      - "{{ vmname }}"   
+    register: webinstance_output
+  - debug:
+      var: webinstance_output
+  - elb_classic_lb:
+      name: "test-please-delete"
+      state: present
+      region: us-east-1
+      subnets: "{{ subnetid }}"
+      security_group_ids:
+        - "{{ weblbsg_output.group_id }}"
+      listeners:
+        - protocol: http # options are http, https, ssl, tcp
+          load_balancer_port: 80
+          instance_port: 80
+          proxy_protocol: True
+      health_check:
+        ping_protocol: http 
+        ping_port: 80
+        ping_path: "/index.html"
+        response_timeout: 5 
+        interval: 30 
+        unhealthy_threshold: 2
+        healthy_threshold: 2
+  - name: Instance Register
+    ec2_elb:
+      instance_id: "{{ item.instance_ids[0] }}"
+      ec2_elbs: "test-please-delete"
+      region: "{{ region }}"
+      state: present
+    with_items:
+      "{{ webinstance_output.results }}"  
